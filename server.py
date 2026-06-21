@@ -1,9 +1,8 @@
-
-import asyncio
+﻿import asyncio
 import json
 import os
-import websockets
 from datetime import datetime
+from aiohttp import web
 
 clients = {}
 
@@ -17,27 +16,44 @@ def write_log(text):
 async def broadcast(message):
     if clients:
         await asyncio.gather(
-            *[ws.send(json.dumps(message)) for ws in clients.values()],
+            *[ws.send_str(json.dumps(message)) for ws in clients.values()],
             return_exceptions=True
         )
 
-async def handler(websocket):
+async def websocket_handler(request):
+    if not web.WebSocketResponse.can_prepare(request):
+        return web.Response(text="WebSocket endpoint. Connect over ws:// or wss:// to /ws.")
+
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+
     username = None
-
     try:
-        data = await websocket.recv()
-        data = json.loads(data)
+        data_msg = await ws.receive()
+        if data_msg.type != web.WSMsgType.TEXT:
+            await ws.close()
+            return ws
 
-        username = data["username"]
+        data = json.loads(data_msg.data)
+        username = data.get("username")
+
+        if not username:
+            await ws.send_str(json.dumps({
+                "type": "error",
+                "message": "Username is required"
+            }))
+            await ws.close()
+            return ws
 
         if username in clients:
-            await websocket.send(json.dumps({
+            await ws.send_str(json.dumps({
                 "type": "error",
                 "message": "Username already exists"
             }))
-            return
+            await ws.close()
+            return ws
 
-        clients[username] = websocket
+        clients[username] = ws
 
         join_msg = f"[{get_time()}] {username} joined"
         print(join_msg)
@@ -48,27 +64,28 @@ async def handler(websocket):
             "message": f"{username} joined the chat"
         })
 
-        async for message in websocket:
+        async for msg in ws:
+            if msg.type != web.WSMsgType.TEXT:
+                continue
 
-            # /users
+            message = msg.data
+
             if message == "/users":
-                await websocket.send(json.dumps({
+                await ws.send_str(json.dumps({
                     "type": "system",
                     "message": "Online Users: " + ", ".join(clients.keys())
                 }))
                 continue
 
-            # /count
             if message == "/count":
-                await websocket.send(json.dumps({
+                await ws.send_str(json.dumps({
                     "type": "system",
                     "message": f"Online Users Count: {len(clients)}"
                 }))
                 continue
 
-            # /help
             if message == "/help":
-                await websocket.send(json.dumps({
+                await ws.send_str(json.dumps({
                     "type": "system",
                     "message":
 """Commands:
@@ -82,71 +99,53 @@ async def handler(websocket):
                 }))
                 continue
 
-            # /nick
             if message.startswith("/nick "):
-
                 new_name = message.split(" ", 1)[1].strip()
-
                 if not new_name:
                     continue
-
                 if new_name in clients:
-                    await websocket.send(json.dumps({
+                    await ws.send_str(json.dumps({
                         "type": "error",
                         "message": "Username already exists"
                     }))
                     continue
-
                 del clients[username]
-                clients[new_name] = websocket
-
+                clients[new_name] = ws
                 old_name = username
                 username = new_name
-
                 await broadcast({
                     "type": "system",
                     "message": f"{old_name} changed name to {new_name}"
                 })
-
                 continue
 
-            # /dm
             if message.startswith("/dm "):
-
                 parts = message.split(" ", 2)
-
                 if len(parts) < 3:
-                    await websocket.send(json.dumps({
+                    await ws.send_str(json.dumps({
                         "type": "error",
                         "message": "Usage: /dm username message"
                     }))
                     continue
-
                 target = parts[1]
                 dm_message = parts[2]
-
                 if target not in clients:
-                    await websocket.send(json.dumps({
+                    await ws.send_str(json.dumps({
                         "type": "error",
                         "message": "User not found"
                     }))
                     continue
-
-                await clients[target].send(json.dumps({
+                await clients[target].send_str(json.dumps({
                     "type": "system",
                     "message": f"[DM from {username}] {dm_message}"
                 }))
-
-                await websocket.send(json.dumps({
+                await ws.send_str(json.dumps({
                     "type": "system",
                     "message": f"[DM to {target}] {dm_message}"
                 }))
-
                 continue
 
-            # Normal chat
             chat_msg = f"[{get_time()}] {username}: {message}"
-
             print(chat_msg)
             write_log(chat_msg)
 
@@ -161,30 +160,31 @@ async def handler(websocket):
 
     finally:
         if username and username in clients:
-
             del clients[username]
-
             leave_msg = f"[{get_time()}] {username} left"
             print(leave_msg)
             write_log(leave_msg)
-
             await broadcast({
                 "type": "system",
                 "message": f"{username} left the chat"
             })
 
-async def process_request(path, request_headers):
-    if path == "/":
-        return 200, [("Content-Type", "text/plain")], b"OK"
-    return None
+    return ws
 
-async def main():
+async def health_check(request):
+    return web.Response(text="OK")
+
+def create_app():
+    app = web.Application()
+    app.router.add_get("/", health_check)
+    app.router.add_head("/", health_check)
+    app.router.add_get("/ws", websocket_handler)
+    return app
+
+def main():
     port = int(os.environ.get("PORT", 8765))
-    async with websockets.serve(handler, "0.0.0.0", port, process_request=process_request):
-        print(f"Server running on ws://0.0.0.0:{port}")
-        await asyncio.Future()
+    app = create_app()
+    web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
-asyncio.run(main())
+    main()
