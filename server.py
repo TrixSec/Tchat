@@ -21,15 +21,15 @@ async def broadcast(message):
         )
 
 async def websocket_handler(request):
-    if not web.WebSocketResponse.can_prepare(request):
-        return web.Response(text="WebSocket endpoint. Connect over ws:// or wss:// to /ws.")
-
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
     username = None
     try:
         data_msg = await ws.receive()
+        if data_msg.type == web.WSMsgType.CLOSE:
+            await ws.close()
+            return ws
         if data_msg.type != web.WSMsgType.TEXT:
             await ws.close()
             return ws
