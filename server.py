@@ -177,7 +177,6 @@ async def health_check(request):
 def create_app():
     app = web.Application()
     app.router.add_get("/", health_check)
-    app.router.add_head("/", health_check)
     app.router.add_get("/ws", websocket_handler)
     return app
 
