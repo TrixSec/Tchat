@@ -1,6 +1,7 @@
 
 import asyncio
 import json
+import os
 import websockets
 from datetime import datetime
 
@@ -172,9 +173,18 @@ async def handler(websocket):
                 "message": f"{username} left the chat"
             })
 
+async def process_request(path, request_headers):
+    if path == "/":
+        return 200, [("Content-Type", "text/plain")], b"OK"
+    return None
+
 async def main():
-    async with websockets.serve(handler, "localhost", 8765):
-        print("Server running on ws://localhost:8765")
+    port = int(os.environ.get("PORT", 8765))
+    async with websockets.serve(handler, "0.0.0.0", port, process_request=process_request):
+        print(f"Server running on ws://0.0.0.0:{port}")
         await asyncio.Future()
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
 asyncio.run(main())
