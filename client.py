@@ -30,7 +30,7 @@ async def send(websocket):
             await websocket.send(msg)
 
 async def main():
-    uri = "ws://localhost:8765"
+    uri = "ws://tchat-swad.onrender.com/ws"
 
     async with websockets.connect(uri) as websocket:
 
