@@ -7,7 +7,7 @@ username = input("Enter username: ")
 server = os.getenv("TCHAT_SERVER", "wss://tchat-swad.onrender.com")
 port = os.getenv("TCHAT_PORT", "")
 port_str = f":{port}" if port else ""
-uri = f"{server}{port_str}/ws"
+uri = f"{server}{port_str}/ws" if not port else f"{server}/ws"
 
 print(f"Connecting to {uri}...")
 
