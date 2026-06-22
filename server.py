@@ -147,6 +147,15 @@ async def websocket_handler(request):
                 }))
                 continue
 
+            # Handle quit command
+            if message_content == COMMAND_QUIT:
+                await ws.send_str(json.dumps({
+                    "type": MSG_TYPE_SYSTEM,
+                    "message": "Goodbye!"
+                }))
+                await ws.close()
+                continue
+
             # Handle nickname change command
             if message_content.startswith(COMMAND_NICK + " "):
                 new_name = message_content.split(" ", 1)[1].strip()
