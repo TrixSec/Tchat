@@ -4,6 +4,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from urllib.parse import urlparse, urlunparse
 
 import websockets
 
@@ -31,18 +32,41 @@ file_transfer_manager = FileTransferManager(username)
 
 status_bar.update(username=username, theme=theme_manager.current_theme)
 
-server = os.environ.get(
-    "TCHAT_SERVER",
-    "ws://tchat-swad.onrender.com"
-)
 
-port = os.environ.get(
-    "TCHAT_PORT",
-    "8765"
-)
+def build_ws_uri(server: str, port: str) -> str:
+    raw_server = (server or "").strip() or "localhost"
 
-uri = f"{server}:{port}/ws"
+    if raw_server.startswith(("ws://", "wss://")):
+        base = raw_server
+    elif raw_server.startswith(("http://", "https://")):
+        base = raw_server.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+    else:
+        base = f"ws://{raw_server}"
 
+    parsed = urlparse(base)
+    scheme = parsed.scheme
+    host = parsed.hostname or ""
+    netloc = parsed.netloc
+    path = parsed.path or "/"
+
+    if not parsed.port:
+        if host in {"localhost", "127.0.0.1", "0.0.0.0"}:
+            if port:
+                netloc = f"{host}:{port}"
+        elif scheme == "ws":
+            scheme = "wss"
+
+    if path in {"", "/"}:
+        path = "/ws"
+    elif not path.endswith("/ws"):
+        path = path.rstrip("/") + "/ws"
+
+    return urlunparse((scheme, netloc, path, "", "", ""))
+
+
+server = os.environ.get("TCHAT_SERVER", "tchat-swad.onrender.com")
+port = os.environ.get("TCHAT_PORT", "8765")
+uri = build_ws_uri(server, port)
 
 console.print(f"Connecting to {uri}...", style="bold blue")
 
