@@ -3,8 +3,8 @@ print("relay.py loaded")
 import asyncio
 import aiohttp
 
-BOT_TOKEN = "8728310235:AAFNjzvK-O_Tuo2QJ0DqJWUMcTm5Zo3rQ-8"
-CHAT_ID = "-1003941220457"  
+BOT_TOKEN = "hi"
+CHAT_ID = "hm"  
 
 async def send_to_telegram(text: str):
     print("send_to_telegram called:", text)
