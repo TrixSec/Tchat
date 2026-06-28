@@ -33,7 +33,7 @@ status_bar.update(username=username, theme=theme_manager.current_theme)
 
 server = os.environ.get(
     "TCHAT_SERVER",
-    "ws://localhost"
+    "ws://tchat-swad.onrender.com"
 )
 
 port = os.environ.get(
