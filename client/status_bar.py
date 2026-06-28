@@ -1,6 +1,11 @@
 import sys
+from pathlib import Path
+
 from rich.panel import Panel
 from rich.text import Text
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 class StatusBar:
     def __init__(self):

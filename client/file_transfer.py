@@ -1,9 +1,15 @@
-import os
 import asyncio
-import json
-import uuid
 import base64
+import json
+import os
 import platform
+import sys
+import uuid
+from pathlib import Path
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from client.ui import console
 
 CHUNK_SIZE = 64 * 1024

@@ -1,5 +1,5 @@
 import asyncio
-from shared.protocol import create_message
+from protocol import create_message
 
 async def handle_file_message(msg_type, msg_data, sender_username, clients, get_next_id):
     """

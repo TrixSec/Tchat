@@ -1,13 +1,18 @@
 # client/ui.py
 
 import hashlib
+import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict
 
 from rich.console import Console
 from rich.text import Text
 
-from shared.models import Message
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from client.shared.models import Message
 from client.themes import theme_manager
 
 console = Console()

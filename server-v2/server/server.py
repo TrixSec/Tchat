@@ -3,10 +3,10 @@ import json
 import os
 from datetime import datetime
 from aiohttp import web
-from server.relay import send_to_telegram, start_telegram_polling
-from shared.protocol import create_message
-from server.presence import PresenceManager
-from server.files import handle_file_message
+from relay import send_to_telegram, start_telegram_polling
+from protocol import create_message
+from presence import PresenceManager
+from files import handle_file_message
 
 clients = {}
 presence = PresenceManager()

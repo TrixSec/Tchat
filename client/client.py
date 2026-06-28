@@ -1,12 +1,25 @@
 import asyncio
 import json
-import websockets
 import os
 import sys
+import types
+from pathlib import Path
+
+import websockets
+
+if __package__ in {None, ""}:
+    client_dir = Path(__file__).resolve().parent
+    parent_dir = client_dir.parent
+    if str(parent_dir) not in sys.path:
+        sys.path.insert(0, str(parent_dir))
+
+    package = types.ModuleType("client")
+    package.__path__ = [str(client_dir)]
+    sys.modules.setdefault("client", package)
 
 from client.ui import print_message, console
-from client.history import HistoryManager
-from shared.models import Message
+from client.historyy import HistoryManager
+from client.shared.models import Message
 from client.file_transfer import FileTransferManager
 from client.status_bar import status_bar
 from client.themes import theme_manager
