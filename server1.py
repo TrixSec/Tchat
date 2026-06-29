@@ -1,15 +1,26 @@
 import asyncio
+import aiohttp
 import websockets
 from datetime import datetime
+
+# ==========================================
+# TELEGRAM CONFIG
+# ==========================================
+
+TELEGRAM_TOKEN   = "8859384964:AAEzPkc6D-UYeM1YRoP7fCmNbnJpbwU76zo"
+TELEGRAM_CHAT_ID = 8550654321
+TELEGRAM_ENABLED = True
+
 
 # ==========================================
 # DATA STORAGE
 # ==========================================
 
-connected_clients = {}   # username -> websocket
-user_status = {}         # username -> status string (e.g. "Online", "Busy")
-message_log = {}         # message_id -> {"user": ..., "text": ...}
-message_counter = [0]    # using a list so we can modify it inside functions
+connected_clients = {}
+user_status       = {}
+message_log       = {}
+message_counter   = [0]
+offline_users     = set()
 
 
 # ==========================================
@@ -21,13 +32,11 @@ def get_time():
 
 
 def next_id():
-    # Every message gets a unique number like [1], [2], [3]...
     message_counter[0] += 1
     return message_counter[0]
 
 
 def status_icon(status):
-    # Converts status word into a symbol
     icons = {
         "online": "●",
         "idle":   "◐",
@@ -37,8 +46,35 @@ def status_icon(status):
     return icons.get(status.lower(), "●")
 
 
+# ==========================================
+# TELEGRAM SENDER
+# ==========================================
+
+async def send_telegram(text: str):
+    if not TELEGRAM_ENABLED:
+        return
+    if TELEGRAM_TOKEN == "YOUR_BOT_TOKEN_HERE":
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data={
+                "chat_id":              TELEGRAM_CHAT_ID,
+                "text":                 text,
+                "disable_notification": "false"
+            }) as response:
+                await response.json()
+    except Exception as e:
+        print(f"[Telegram Error] {e}")
+
+
+# ==========================================
+# BROADCAST
+# ==========================================
+
 async def broadcast(message, exclude=None):
-    # Sends a message to everyone connected (except the excluded user)
     for username, client in list(connected_clients.items()):
         if client != exclude:
             try:
@@ -48,7 +84,22 @@ async def broadcast(message, exclude=None):
 
 
 # ==========================================
-# MAIN HANDLER — runs once per connected user
+# MENTION DETECTOR
+# ==========================================
+
+def find_mentions(message: str):
+    mentions = []
+    words = message.split()
+    for word in words:
+        if word.startswith("@"):
+            name = word[1:].strip(".,!?")
+            if name in connected_clients or name in offline_users:
+                mentions.append(name)
+    return mentions
+
+
+# ==========================================
+# MAIN HANDLER
 # ==========================================
 
 async def handler(websocket):
@@ -58,7 +109,7 @@ async def handler(websocket):
     try:
 
         # ==========================================
-        # STEP 1 — USERNAME VALIDATION
+        # USERNAME VALIDATION
         # ==========================================
 
         while True:
@@ -73,28 +124,28 @@ async def handler(websocket):
                 await websocket.send("ERROR: Username already taken.")
                 continue
 
-            # Username is valid — confirm to client
             await websocket.send("OK")
             break
 
         # ==========================================
-        # STEP 2 — REGISTER USER
+        # REGISTER USER
         # ==========================================
 
         connected_clients[username] = websocket
-        user_status[username] = "online"   # default status when joining
+        user_status[username]       = "online"
+        offline_users.discard(username)
 
         join_msg = f"[{get_time()}] *** {username} {status_icon('online')} has joined the chat ***"
         print(join_msg)
         await broadcast(join_msg)
-
-        # Welcome message only to the new user
         await websocket.send(
             f"[{get_time()}] Welcome {username}! Type /help to see commands."
         )
 
+        await send_telegram(f"🟢 {username} joined TermChat")
+
         # ==========================================
-        # STEP 3 — MAIN MESSAGE LOOP
+        # MAIN MESSAGE LOOP
         # ==========================================
 
         async for message in websocket:
@@ -104,23 +155,25 @@ async def handler(websocket):
                 continue
 
             # ------------------------------------------
-            # /help — show all available commands
+            # /help
             # ------------------------------------------
             if message == "/help":
                 help_text = (
                     f"[{get_time()}] Available Commands:\n"
-                    "  /users             - See who is online\n"
-                    "  /dm user msg       - Send a private message\n"
-                    "  /reply ID msg      - Reply to a message by its ID publicly\n"
-                    "  /rpm ID msg        - Reply to a message by ID privately to author\n"
-                    "  /status STATUS     - Set your status (online/idle/busy/away)\n"
-                    "  /nick newname      - Change your username\n"
-                    "  /quit              - Leave the chat"
+                    "  /users               - See who is online\n"
+                    "  /dm user msg         - Send a private message\n"
+                    "  /reply ID msg        - Reply to a message publicly\n"
+                    "  /rpm ID msg          - Reply privately to message author\n"
+                    "  /status STATUS       - Set your status (online/idle/busy/away)\n"
+                    "  /nick newname        - Change your username\n"
+                    "  /tg message          - Send message to Telegram\n"
+                    "  /send username file  - Send a file to a user\n"
+                    "  /quit                - Leave the chat"
                 )
                 await websocket.send(help_text)
 
             # ------------------------------------------
-            # /users — list everyone online with status
+            # /users
             # ------------------------------------------
             elif message == "/users":
                 if not connected_clients:
@@ -133,7 +186,7 @@ async def handler(websocket):
                     await websocket.send("\n".join(lines))
 
             # ------------------------------------------
-            # /status — update presence (online/idle/busy/away)
+            # /status
             # ------------------------------------------
             elif message.startswith("/status "):
                 new_status = message.split(" ", 1)[1].strip().lower()
@@ -151,40 +204,33 @@ async def handler(websocket):
                     await broadcast(status_msg)
 
             # ------------------------------------------
-            # /reply ID message — reply to a specific message
+            # /reply
             # ------------------------------------------
             elif message.startswith("/reply "):
                 parts = message.split(" ", 2)
 
                 if len(parts) < 3:
-                    await websocket.send(
-                        f"[{get_time()}] Usage: /reply ID your_message"
-                    )
+                    await websocket.send(f"[{get_time()}] Usage: /reply ID your_message")
                 else:
                     try:
-                        reply_to_id = int(parts[1])   # the message ID number
-                        reply_text = parts[2]
+                        reply_to_id = int(parts[1])
+                        reply_text  = parts[2]
 
                         if reply_to_id not in message_log:
                             await websocket.send(
                                 f"[{get_time()}] Message ID [{reply_to_id}] not found."
                             )
                         else:
-                            # Get the original message details
-                            original = message_log[reply_to_id]
+                            original      = message_log[reply_to_id]
                             original_user = original["user"]
                             original_text = original["text"]
+                            reply_id      = next_id()
 
-                            # Give reply its own ID too
-                            reply_id = next_id()
-
-                            # Store the reply in message log
                             message_log[reply_id] = {
                                 "user": username,
                                 "text": reply_text
                             }
 
-                            # Format: shows original message then reply below it
                             reply_msg = (
                                 f"[{get_time()}] [{reply_id}]\n"
                                 f"  ┌─ [{reply_to_id}] {original_user}: {original_text}\n"
@@ -196,21 +242,74 @@ async def handler(websocket):
 
                     except ValueError:
                         await websocket.send(
-                            f"[{get_time()}] Message ID must be a number. Usage: /reply 5 your_message"
+                            f"[{get_time()}] Message ID must be a number."
                         )
 
             # ------------------------------------------
-            # /dm username message — private message
+            # /rpm
+            # ------------------------------------------
+            elif message.startswith("/rpm "):
+                parts = message.split(" ", 2)
+
+                if len(parts) < 3:
+                    await websocket.send(f"[{get_time()}] Usage: /rpm ID your_message")
+                else:
+                    try:
+                        reply_to_id = int(parts[1])
+                        reply_text  = parts[2]
+
+                        if reply_to_id not in message_log:
+                            await websocket.send(
+                                f"[{get_time()}] Message ID [{reply_to_id}] not found."
+                            )
+                        else:
+                            original      = message_log[reply_to_id]
+                            original_user = original["user"]
+                            original_text = original["text"]
+
+                            if original_user not in connected_clients:
+                                await websocket.send(
+                                    f"[{get_time()}] {original_user} is no longer online."
+                                )
+                            elif original_user == username:
+                                await websocket.send(
+                                    f"[{get_time()}] You cannot RPM yourself."
+                                )
+                            else:
+                                rpm_msg = (
+                                    f"[{get_time()}] [RPM from {username}]\n"
+                                    f"  ┌─ [{reply_to_id}] {original_user}: {original_text}\n"
+                                    f"  └─ {username}: {reply_text}"
+                                )
+                                await connected_clients[original_user].send(rpm_msg)
+                                await websocket.send(
+                                    f"[{get_time()}] [RPM to {original_user}]\n"
+                                    f"  ┌─ [{reply_to_id}] {original_user}: {original_text}\n"
+                                    f"  └─ {username}: {reply_text}"
+                                )
+
+                                if user_status.get(original_user) in ["idle", "away"]:
+                                    await send_telegram(
+                                        f"📨 RPM from {username}\n"
+                                        f"↩ {original_user}: {original_text}\n"
+                                        f"└ {username}: {reply_text}"
+                                    )
+
+                    except ValueError:
+                        await websocket.send(
+                            f"[{get_time()}] ID must be a number."
+                        )
+
+            # ------------------------------------------
+            # /dm
             # ------------------------------------------
             elif message.startswith("/dm "):
                 parts = message.split(" ", 2)
 
                 if len(parts) < 3:
-                    await websocket.send(
-                        f"[{get_time()}] Usage: /dm username message"
-                    )
+                    await websocket.send(f"[{get_time()}] Usage: /dm username message")
                 else:
-                    target = parts[1]
+                    target  = parts[1]
                     dm_text = parts[2]
 
                     if target not in connected_clients:
@@ -229,25 +328,27 @@ async def handler(websocket):
                             f"[{get_time()}] [DM to {target}]: {dm_text}"
                         )
 
+                        if user_status.get(target) in ["idle", "away"]:
+                            await send_telegram(
+                                f"💬 DM from {username} → {target}\n{dm_text}"
+                            )
+
             # ------------------------------------------
-            # /nick newname — change username
+            # /nick
             # ------------------------------------------
             elif message.startswith("/nick "):
                 new_name = message.split(" ", 1)[1].strip()
 
                 if not new_name:
                     await websocket.send(f"[{get_time()}] Usage: /nick newname")
-
                 elif new_name in connected_clients:
                     await websocket.send(
                         f"[{get_time()}] Username '{new_name}' is already taken."
                     )
                 else:
                     old_name = username
-
-                    # Move websocket to new name in both dicts
                     connected_clients[new_name] = connected_clients.pop(old_name)
-                    user_status[new_name] = user_status.pop(old_name)
+                    user_status[new_name]       = user_status.pop(old_name)
                     username = new_name
 
                     rename_msg = (
@@ -255,59 +356,56 @@ async def handler(websocket):
                     )
                     print(rename_msg)
                     await broadcast(rename_msg)
-            
 
-                        # ------------------------------------------
-            # /rpm ID message — private reply to a message
+            #/ping -  heartbeaet from cient
+
+            elif message == "/ping":
+                await websocket.send("/pong")
+
             # ------------------------------------------
-            elif message.startswith("/rpm "):
-                parts = message.split(" ", 2)
+            # /tgRelay — message coming FROM Telegram
+            # ------------------------------------------
+            elif message.startswith("/tgRelay "):
+                relay_text = message.split(" ", 1)[1].strip()
+                relay_msg  = f"[{get_time()}] [Telegram] {relay_text}"
+                print(relay_msg)
+                await broadcast(relay_msg)
 
-                if len(parts) < 3:
+            # ------------------------------------------
+            # /send username filename filesize filedata
+            # ------------------------------------------
+            elif message.startswith("/send "):
+                parts = message.split(" ", 4)
+
+                if len(parts) < 5:
                     await websocket.send(
-                        f"[{get_time()}] Usage: /rpm ID your_message"
+                        f"[{get_time()}] Usage: /send username filename"
                     )
                 else:
-                    try:
-                        reply_to_id = int(parts[1])
-                        reply_text = parts[2]
+                    target   = parts[1]
+                    filename = parts[2]
+                    filesize = parts[3]
+                    filedata = parts[4]
 
-                        if reply_to_id not in message_log:
-                            await websocket.send(
-                                f"[{get_time()}] Message ID [{reply_to_id}] not found."
-                            )
-                        else:
-                            original = message_log[reply_to_id]
-                            original_user = original["user"]
-                            original_text = original["text"]
-
-                            if original_user not in connected_clients:
-                                await websocket.send(
-                                    f"[{get_time()}] {original_user} is no longer online."
-                                )
-                            elif original_user == username:
-                                await websocket.send(
-                                    f"[{get_time()}] You cannot RPM yourself."
-                                )
-                            else:
-                                await connected_clients[original_user].send(
-                                    f"[{get_time()}] [RPM from {username}]\n"
-                                    f"  ┌─ [{reply_to_id}] {original_user}: {original_text}\n"
-                                    f"  └─ {username}: {reply_text}"
-                                )
-
-                                await websocket.send(
-                                    f"[{get_time()}] [RPM to {original_user}]\n"
-                                    f"  ┌─ [{reply_to_id}] {original_user}: {original_text}\n"
-                                    f"  └─ {username}: {reply_text}"
-                                )
-
-                    except ValueError:
+                    if target not in connected_clients:
                         await websocket.send(
-                            f"[{get_time()}] ID must be a number. Usage: /rpm 5 your_message"
+                            f"[{get_time()}] User '{target}' not found."
                         )
+                    elif target == username:
+                        await websocket.send(
+                            f"[{get_time()}] You cannot send files to yourself."
+                        )
+                    else:
+                        # Forward file to target user
+                        await connected_clients[target].send(
+                            f"/incoming {username} {filename} {filesize} {filedata}"
+                        )
+                        await websocket.send(
+                            f"[{get_time()}] ✓ File '{filename}' sent to {target}"
+                        )
+
             # ------------------------------------------
-            # /quit — clean exit
+            # /quit
             # ------------------------------------------
             elif message == "/quit":
                 await websocket.send(f"[{get_time()}] Goodbye {username}!")
@@ -322,12 +420,11 @@ async def handler(websocket):
                 )
 
             # ------------------------------------------
-            # Regular chat message — gets a unique ID
+            # Regular chat message
             # ------------------------------------------
             else:
                 msg_id = next_id()
 
-                # Save message so /reply can reference it later
                 message_log[msg_id] = {
                     "user": username,
                     "text": message
@@ -337,23 +434,32 @@ async def handler(websocket):
                 print(chat_msg)
                 await broadcast(chat_msg)
 
-    # ==========================================
-    # CONNECTION LOST UNEXPECTEDLY
-    # ==========================================
+                mentions = find_mentions(message)
+                for mentioned_user in mentions:
+                    if mentioned_user not in connected_clients:
+                        await send_telegram(
+                            f"🔔 {username} mentioned @{mentioned_user}\n{message}"
+                        )
+                    elif user_status.get(mentioned_user) in ["idle", "away"]:
+                        await send_telegram(
+                            f"🔔 {username} mentioned @{mentioned_user} "
+                            f"({user_status.get(mentioned_user)})\n{message}"
+                        )
+
     except websockets.exceptions.ConnectionClosed:
         pass
 
-    # ==========================================
-    # CLEANUP — runs no matter how user left
-    # ==========================================
     finally:
         if username and username in connected_clients:
             del connected_clients[username]
             del user_status[username]
+            offline_users.add(username)
 
             leave_msg = f"[{get_time()}] *** {username} has left the chat ***"
             print(leave_msg)
             await broadcast(leave_msg)
+
+            await send_telegram(f"🔴 {username} went offline")
 
 
 # ==========================================
@@ -363,9 +469,20 @@ async def handler(websocket):
 async def main():
     print("TermChat v2 Server")
     print("Running on ws://localhost:8765")
+    print(f"Telegram: {'Enabled ✓' if TELEGRAM_ENABLED else 'Disabled'}")
     print("Waiting for users...\n")
     async with websockets.serve(handler, "localhost", 8765):
         await asyncio.Future()
 
 
-asyncio.run(main())
+while True:
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nServer stopped.")
+        break
+    except Exception as e:
+        print(f"Server crashed: {e}")
+        print("Restarting in 3 seconds...")
+        import time
+        time.sleep(3)
