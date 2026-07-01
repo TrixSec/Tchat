@@ -135,7 +135,39 @@ class TermChatServer:
                     ))
                     
                 elif msg_type == MSG_CHAT:
-                    content = msg.get("content", "")
+                    content = msg.get("content", "").strip()
+                    
+                    if content.startswith("/"):
+                        parts = content.split(" ", 1)
+                        cmd = parts[0]
+                        arg = parts[1].strip() if len(parts) > 1 else ""
+                        
+                        if cmd == "/help":
+                            help_text = (
+                                "Available Server Commands:\n"
+                                "  /help   - Show this help message\n"
+                                "  /users  - List all online users and their presence status\n"
+                                "  /count  - Show the number of active connections"
+                            )
+                            await websocket.send(serialize_message(
+                                make_message(MSG_SYSTEM, "Server", help_text)
+                            ))
+                        elif cmd == "/users":
+                            online_users = self.presence_mgr.get_online_users_summary()
+                            await websocket.send(serialize_message(
+                                make_message(MSG_SYSTEM, "Server", f"Online now: {online_users}")
+                            ))
+                        elif cmd == "/count":
+                            count = len(self.clients)
+                            await websocket.send(serialize_message(
+                                make_message(MSG_SYSTEM, "Server", f"Active connections: {count}")
+                            ))
+                        else:
+                            await websocket.send(serialize_message(
+                                make_message(MSG_ERROR, "Server", f"Unknown server command: {cmd}")
+                            ))
+                        continue
+                        
                     self.message_counter += 1
                     msg_id = self.message_counter
                     

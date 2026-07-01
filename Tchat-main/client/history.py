@@ -55,16 +55,41 @@ def get_history(limit=50):
     except Exception as e:
         return []
 
-def search_history(query):
+def search_history(query="", sender=None, msg_type=None, limit=None, case_sensitive=False):
     try:
         conn = sqlite3.connect(DB_PATH)
+        if case_sensitive:
+            conn.execute("PRAGMA case_sensitive_like = ON;")
+        else:
+            conn.execute("PRAGMA case_sensitive_like = OFF;")
+            
         cursor = conn.cursor()
-        cursor.execute("""
+        
+        sql = """
             SELECT msg_id, type, sender, recipient, content, reply_to, timestamp 
             FROM messages 
-            WHERE content LIKE ? 
-            ORDER BY id ASC
-        """, (f"%{query}%",))
+            WHERE 1=1
+        """
+        params = []
+        if query:
+            sql += " AND content LIKE ?"
+            params.append(f"%{query}%")
+            
+        if sender:
+            sql += " AND sender LIKE ?"
+            params.append(sender)
+            
+        if msg_type:
+            sql += " AND type = ?"
+            params.append(msg_type)
+            
+        sql += " ORDER BY id ASC"
+        
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+            
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         conn.close()
         return rows

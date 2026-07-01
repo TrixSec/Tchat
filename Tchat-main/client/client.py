@@ -4,9 +4,16 @@ import os
 import sys
 import time
 import argparse
+import shlex
 import base64
 import threading
 import websockets
+
+class SearchArgumentParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise ValueError(message)
+    def print_help(self, file=None):
+        raise ValueError(self.format_help())
 
 # Add parent directory to sys.path so we can import client and shared modules
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -412,15 +419,63 @@ class TermChatClient:
                         
                     elif cmd == "/search":
                         if not arg:
-                            self.ui.print_text("[System] Usage: /search <query>")
+                            self.ui.print_text(
+                                "[System] Usage: /search [options] <query>\n"
+                                "Options:\n"
+                                "  -s, --sender <name>       Filter by sender\n"
+                                "  -t, --type <chat|dm|rep>  Filter by message type\n"
+                                "  -l, --limit <num>         Limit result count\n"
+                                "  -c, --case-sensitive      Case-sensitive search\n"
+                                "  -h, --help                Show this help"
+                            )
                         else:
-                            matches = search_history(arg)
-                            self.ui.print_text(f"--- Search Results for '{arg}' ---")
-                            for r in matches:
-                                fmt = self.ui.format_message(r[0], r[2], r[4], r[1], r[6], r[5], r[3])
-                                self.ui.print_text(fmt)
-                            self.ui.print_text("----------------------------------")
+                            search_parser = SearchArgumentParser(prog="/search", add_help=False)
+                            search_parser.add_argument("--sender", "-s", type=str)
+                            search_parser.add_argument("--type", "-t", type=str, choices=["chat", "dm", "reply"])
+                            search_parser.add_argument("--limit", "-l", type=int)
+                            search_parser.add_argument("--case-sensitive", "-c", action="store_true")
+                            search_parser.add_argument("--help", "-h", action="store_true")
+                            search_parser.add_argument("query", nargs="*")
                             
+                            try:
+                                args_list = shlex.split(arg)
+                                parsed_args = search_parser.parse_args(args_list)
+                                
+                                if parsed_args.help:
+                                    raise ValueError(
+                                        "Usage: /search [options] <query>\n"
+                                        "Options:\n"
+                                        "  -s, --sender <name>       Filter by sender\n"
+                                        "  -t, --type <chat|dm|rep>  Filter by message type\n"
+                                        "  -l, --limit <num>         Limit result count\n"
+                                        "  -c, --case-sensitive      Case-sensitive search\n"
+                                        "  -h, --help                Show this help"
+                                    )
+                                    
+                                query_str = " ".join(parsed_args.query) if parsed_args.query else ""
+                                if not query_str and not parsed_args.sender and not parsed_args.type:
+                                    raise ValueError("You must specify a search query, --sender, or --type.")
+                                    
+                                matches = search_history(
+                                    query=query_str,
+                                    sender=parsed_args.sender,
+                                    msg_type=parsed_args.type,
+                                    limit=parsed_args.limit,
+                                    case_sensitive=parsed_args.case_sensitive
+                                )
+                                self.ui.print_text(f"--- Search Results for query='{query_str}' ---")
+                                if not matches:
+                                    self.ui.print_text("No matching messages found.")
+                                for r in matches:
+                                    fmt = self.ui.format_message(r[0], r[2], r[4], r[1], r[6], r[5], r[3])
+                                    self.ui.print_text(fmt)
+                                self.ui.print_text("----------------------------------")
+                            except ValueError as e:
+                                for line in str(e).split("\n"):
+                                    self.ui.print_text(f"[System] {line}")
+                            except Exception as e:
+                                self.ui.print_text(f"[System] Error parsing search arguments: {e}")
+                                
                     elif cmd == "/status":
                         self.current_presence = arg if arg in ["online", "idle", "offline"] else "online"
                         self.current_custom_status = arg if arg not in ["online", "idle", "offline"] else ""
@@ -585,6 +640,8 @@ class TermChatClient:
                     else:
                         self.offline_queue.append(chat_msg)
                         self.ui.print_text("[System] Offline. Chat message buffered.")
+            else:
+                self.ui.handle_character(key)
             
     async def start(self):
         self.loop = asyncio.get_running_loop()
